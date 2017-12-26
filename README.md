@@ -1,7 +1,7 @@
 # parallel_tempering_bnn
 Parallel Tempering Bayesian Feedforward Networks
 
-Build on: https://github.com/rohitash-chandra/ensemble_bnn
+Built on: https://github.com/rohitash-chandra/ensemble_bnn
 
 by Rohitash Chandra and Ratneel Deo
 
