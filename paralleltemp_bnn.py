@@ -3,7 +3,8 @@ import numpy as np
 import random
 import time
 import math
-
+import pickle
+import tensorflow as tf
 
 # An example of a class
 class Network:
@@ -66,7 +67,7 @@ class Network:
         Desired = np.zeros((1, self.Top[2]))
         fx = np.zeros(size)
 
-        for pat in xrange(0, size):
+        for pat in range(0, size):
             Input[:] = data[pat, 0:self.Top[0]]
             Desired[:] = data[pat, self.Top[0]:]
 
@@ -114,7 +115,7 @@ class MCMC:
         log_loss = part1 - part2 - (1 + nu_1) * np.log(tausq) - (nu_2 / tausq)
         return log_loss
         
-    def sampler(self):
+    def sampler(self, beta):
 
         # ------------------- initialize MCMC
         testsize = self.testdata.shape[0]
@@ -127,8 +128,8 @@ class MCMC:
         netw = self.topology  # [input, hidden, output]
         y_test = self.testdata[:, netw[0]]
         y_train = self.traindata[:, netw[0]]
-        print y_train.size
-        print y_test.size
+        print (y_train.size)
+        print (y_test.size)
 
         w_size = (netw[0] * netw[1]) + (netw[1] * netw[2]) + netw[1] + netw[2]  # num of weights and bias
 
@@ -147,7 +148,7 @@ class MCMC:
         # --------------------- Declare FNN and initialize
 
         neuralnet = Network(self.topology, self.traindata, self.testdata)
-        print 'evaluate Initial w'
+        print ('evaluate Initial w')
 
         pred_train = neuralnet.evaluate_proposal(self.traindata, w)
         pred_test = neuralnet.evaluate_proposal(self.testdata, w)
@@ -164,14 +165,14 @@ class MCMC:
         [likelihood, pred_train, rmsetrain] = self.likelihood_func(neuralnet, self.traindata, w, tau_pro)
         [likelihood_ignore, pred_test, rmsetest] = self.likelihood_func(neuralnet, self.testdata, w, tau_pro)
 
-        print likelihood
+        print (likelihood)
 
         naccept = 0
-        print 'begin sampling using mcmc random walk'
+        print ('begin sampling using mcmc random walk')
         plt.plot(x_train, y_train)
         plt.plot(x_train, pred_train)
         plt.title("Plot of Data vs Initial Fx")
-        plt.savefig('begin.png')
+        plt.savefig('result/begin.png')
         plt.clf()
 
         plt.plot(x_train, y_train)
@@ -217,7 +218,7 @@ class MCMC:
                 fxtest_samples[i + 1,] = pred_test
                 rmse_train[i + 1,] = rmsetrain
                 rmse_test[i + 1,] = rmsetest
-                lhood = likelihood
+                lhood_current = likelihood
                 plt.plot(x_train, pred_train)
 
 
@@ -231,13 +232,13 @@ class MCMC:
 
                 # print i, 'rejected and retained'
 
-        print naccept, ' num accepted'
-        print naccept / (samples * 1.0), '% was accepted'
+        print (naccept, ' num accepted')
+        print (naccept*100.0 / (samples), '% was accepted')
         accept_ratio = naccept / (samples * 1.0) * 100
-
+        lhood = lhood_current
         plt.title("Plot of Accepted Proposals")
-        plt.savefig('proposals.png')
-        plt.savefig('proposals.svg', format='svg', dpi=600)
+        plt.savefig('result/proposals'+str(beta)+'.png')
+        plt.savefig('result/proposals.svg', format='svg', dpi=600)
         plt.clf()
 
         return (pos_w, pos_tau, fxtrain_samples, fxtest_samples, x_train, x_test, rmse_train, rmse_test, accept_ratio, lhood)
@@ -251,7 +252,7 @@ class ParallelTempering:
         self.chains = []
         self.tempratures = []
         self.NumSamples = int(NumSample/self.num_chains)
-        self.sub_sample_size = int( 0.1* self.NumSamples)
+        self.sub_sample_size = int(0.05* self.NumSamples)
         self.traindata = traindata
         self.testdata = testdata
         self.topology = topology
@@ -270,27 +271,27 @@ class ParallelTempering:
     # assigin tempratures dynamically   
     def assign_temptarures(self):
         tmpr_rate = (self.maxtemp /self.num_chains)
-        temp = 1
-        for i in xrange(0, self.num_chains):            
+        temp = 10.0 #change temp
+        for i in range(0, self.num_chains):            
             self.tempratures.append(temp)
-            temp += temp #tmpr_rate
-            print(self.tempratures[i])
+            temp += 10
+            print (self.tempratures[i])
             
     
     # Create the chains.. Each chain gets its own temprature
     def initialize_chains (self):
         self.assign_temptarures()
-        for i in xrange(0, self.num_chains):
+        for i in range(0, self.num_chains):
             self.chains.append(MCMC(self.NumSamples,self.traindata,self.testdata,self.topology, self.tempratures[i]))
             
     # Propose swapping between adajacent chains        
-    def propose_swap (self, swap_proposal):
+    def propose_swap (self, swap_proposal): 
          for l in range( self.num_chains-1, 0, -1):            
                 u = random.uniform(0, 1) 
                 swap_prob = min(1, swap_proposal[l-1])
                 if u < swap_prob : 
                     self.swap_info(self.chains[l],self.chains[-1])
-                    print('chains swapped')     
+                    print ('chains swapped')     
             
             
     # Swap configuration of two chains    
@@ -300,8 +301,6 @@ class ParallelTempering:
         
         chain_cooler.fxtrain_samples = chain_warmer.fxtrain_samples
         chain_cooler.fxtest_samples = chain_warmer.fxtest_samples
-        chain_cooler.x_train = chain_warmer.x_train
-        chain_cooler.x_test = chain_warmer.x_test
         chain_cooler.rmse_train = chain_warmer.rmse_train
         chain_cooler.rmse_test = chain_warmer.rmse_test
         chain_cooler.pos_w = chain_warmer.pos_w
@@ -309,8 +308,6 @@ class ParallelTempering:
         
         chain_warmer.fxtrain_samples = temp_chain.fxtrain_samples
         chain_warmer.fxtest_samples = temp_chain.fxtest_samples
-        chain_cooler.x_train = temp_chain.x_train
-        chain_cooler.x_test = temp_chain.x_test
         chain_cooler.rmse_train = temp_chain.rmse_train
         chain_cooler.rmse_test = temp_chain.rmse_test
         chain_cooler.pos_w = temp_chain.pos_w
@@ -319,8 +316,8 @@ class ParallelTempering:
     # Merge different MCMC chains y stacking them on top of each other       
     def merge_chain (self, chain):
         comb_chain = []
-        for i in xrange(0, self.num_chains):
-            for j in xrange(0, self.NumSamples):
+        for i in range(0, self.num_chains):
+            for j in range(0, self.NumSamples):
                 comb_chain.append(chain[i][j].tolist())     
         return np.asarray(comb_chain)
         
@@ -345,8 +342,9 @@ class ParallelTempering:
             accept_ratio = np.zeros(self.num_chains)
             #run each chain for a fixed number of SAMPLING Period along the MCMC Chain
             for j in range(0,self.num_chains):        
-                self.pos_w[j,], self.pos_tau[j,], self.fxtrain_samples[j,], self.fxtest_samples[j,], x_train[j,], x_test[j,], self.rmse_train[j,], self.rmse_test[j,], accept_ratio[j], lhood[j] = self.chains[j].sampler()
-                print (j, lhood[j])
+                self.pos_w[j,], self.pos_tau[j,], self.fxtrain_samples[j,], self.fxtest_samples[j,], x_train[j,], x_test[j,], self.rmse_train[j,], self.rmse_test[j,], accept_ratio[j], lhood[j] = self.chains[j].sampler(j)
+                print (j)
+                print (lhood[j])
                 
             
             #calculate the swap acceptance rate for parallel chains    
@@ -360,40 +358,29 @@ class ParallelTempering:
             #update the starting and ending positon within one chain
             start =  end
             end =  start + self.sub_sample_size
-        
-        
-        
-        
-        
-        end =  self.NumSamples-1   
-        for j in range(0,self.num_chains):        
-            pos_w[j,], pos_tau[j,], fxtrain_samples[j,], fxtest_samples[j,], x_train[j,], x_test[j,], rmse_train[j,], rmse_test[j,], accept_ratio, lhood[j] = self.chains[j].sampler()
-            print (j, lhood[j])    
+          
   
         #concatenate all chains into one complete chain by stacking them on each other 
-        chain_fxtrain = self.merge_chain(fxtrain_samples)
-        chain_fxtest = self.merge_chain(fxtest_samples)
-        chain_w = self.merge_chain(pos_w)
-        chain_tau = self.merge_chain(pos_tau)
-        chain_rmse_train = self.merge_chain(rmse_train)
-        chain_rmse_test = self.merge_chain(rmse_test)
-        x_train = self.merge_chain(x_train[1:x_train.shape[0],])
-        x_test = self.merge_chain(x_test[1:x_train.shape[0],])
-             
+        chain_fxtrain = self.merge_chain(self.fxtrain_samples)
+        chain_fxtest = self.merge_chain(self.fxtest_samples)
+        chain_w = self.merge_chain(self.pos_w)
+        chain_tau = self.merge_chain(self.pos_tau)
+        chain_rmse_train = self.merge_chain(self.rmse_train)
+        chain_rmse_test = self.merge_chain(self.rmse_test)
             
         return chain_fxtrain,chain_fxtest,chain_w,chain_tau,chain_rmse_train, chain_rmse_test, x_train, x_test
 # -------------------------------------------------------------------
 def main():
     outres = open('resultspriors.txt', 'w')
-    for problem in xrange(2, 3): 
+    for problem in range(2, 3): 
 
         hidden = 5
         input = 4  #
         output = 1
 
         
-        traindata = np.loadtxt("A:\Work\Projects\USyd\MCMC\PT\LDMCMC_timeseries-master\Data_OneStepAhead\Sunspot\\train.txt")
-        testdata = np.loadtxt("A:\Work\Projects\USyd\MCMC\PT\LDMCMC_timeseries-master\Data_OneStepAhead\Sunspot\\test.txt")  #
+        traindata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\Sunspot\\train.txt")
+        testdata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\Sunspot\\test.txt")  #
 
         print(traindata)
 
@@ -403,22 +390,28 @@ def main():
 
         random.seed(time.time())
 
-        NumSample = 50000  # need to pick yourself
+        NumSample = 80000  # need to pick yourself
         
         #Number of chains of MCMC required to be run
-        num_chains = 6
+        num_chains = 2
 
         #Maximum tempreature of hottest chain  
         maxtemp = 100
         
-        #Create A a Patratellel Tempring object instance 
+        # Create A a Patratellel Tempring object instance 
         pt = ParallelTempering(num_chains, maxtemp,NumSample,traindata,testdata,topology)
 
         #run the chains in a sequence in ascending order
-        fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test = pt.run_chains()
-        print 'sucessfully sampled'
-
-        burnin = 0.1 * numSamples  # use post burn in samples
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        with tf.Session(config=config) as sess: #For running on GPU for faster computation
+            fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test = pt.run_chains()
+        print ('sucessfully sampled')
+        f = open('store.pckl','wb')
+        pickle.dump([fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test],f)
+        #[fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test] = pickle.load(f)
+        f.close()
+        burnin = 0.1 * NumSample  # use post burn in samples
 
         pos_w = pos_w[int(burnin):, ]
         pos_tau = pos_tau[int(burnin):, ]
@@ -435,49 +428,48 @@ def main():
         rmsetr_std = np.std(rmse_train[int(burnin):])
         rmse_tes = np.mean(rmse_test[int(burnin):])
         rmsetest_std = np.std(rmse_test[int(burnin):])
-        print rmse_tr, rmsetr_std, rmse_tes, rmsetest_std
-        np.savetxt(outres, (rmse_tr, rmsetr_std, rmse_tes, rmsetest_std, accept_ratio), fmt='%1.5f')
+        print (rmse_tr, rmsetr_std, rmse_tes, rmsetest_std)
+        #np.savetxt(outres, (rmse_tr, rmsetr_std, rmse_tes, rmsetest_std), fmt='%1.5f')
 
         ytestdata = testdata[:, input]
         ytraindata = traindata[:, input]
 
-        plt.plot(x_test, ytestdata, label='actual')
-        plt.plot(x_test, fx_mu, label='pred. (mean)')
-        plt.plot(x_test, fx_low, label='pred.(5th percen.)')
-        plt.plot(x_test, fx_high, label='pred.(95th percen.)')
-        plt.fill_between(x_test, fx_low, fx_high, facecolor='g', alpha=0.4)
+        plt.plot(x_test[-1,:], ytestdata, label='actual')
+        plt.plot(x_test[-1,:], fx_mu, label='pred. (mean)')
+        plt.plot(x_test[-1,:], fx_low, label='pred.(5th percen.)')
+        plt.plot(x_test[-1,:], fx_high, label='pred.(95th percen.)')
+        plt.fill_between(x_test[-1,:], fx_low, fx_high, facecolor='g', alpha=0.4)
         plt.legend(loc='upper right')
 
         plt.title("Plot of Test Data vs MCMC Uncertainty ")
-        plt.savefig('mcmcrestest.png')
-        plt.savefig('mcmcrestest.svg', format='svg', dpi=600)
+        plt.savefig('result/mcmcrestest.png')
+        plt.savefig('result/mcmcrestest.svg', format='svg', dpi=600)
         plt.clf()
         # -----------------------------------------
-        plt.plot(x_train, ytraindata, label='actual')
-        plt.plot(x_train, fx_mu_tr, label='pred. (mean)')
-        plt.plot(x_train, fx_low_tr, label='pred.(5th percen.)')
-        plt.plot(x_train, fx_high_tr, label='pred.(95th percen.)')
-        plt.fill_between(x_train, fx_low_tr, fx_high_tr, facecolor='g', alpha=0.4)
+        plt.plot(x_train[-1,:], ytraindata, label='actual')
+        plt.plot(x_train[-1,:], fx_mu_tr, label='pred. (mean)')
+        plt.plot(x_train[-1,:], fx_low_tr, label='pred.(5th percen.)')
+        plt.plot(x_train[-1,:], fx_high_tr, label='pred.(95th percen.)')
+        plt.fill_between(x_train[-1,:], fx_low_tr, fx_high_tr, facecolor='g', alpha=0.4)
         plt.legend(loc='upper right')
 
         plt.title("Plot of Train Data vs MCMC Uncertainty ")
-        plt.savefig('mcmcrestrain.png')
-        plt.savefig('mcmcrestrain.svg', format='svg', dpi=600)
+        plt.savefig('result/mcmcrestrain.png')
+        plt.savefig('result/mcmcrestrain.svg', format='svg', dpi=600)
         plt.clf()
 
         mpl_fig = plt.figure()
         ax = mpl_fig.add_subplot(111)
 
         ax.boxplot(pos_w)
-
         ax.set_xlabel('[W1] [B1] [W2] [B2]')
         ax.set_ylabel('Posterior')
 
         plt.legend(loc='upper right')
 
         plt.title("Boxplot of Posterior W (weights and biases)")
-        plt.savefig('w_pos.png')
-        plt.savefig('w_pos.svg', format='svg', dpi=600)
+        plt.savefig('result/w_pos.png')
+        plt.savefig('result/w_pos.svg', format='svg', dpi=600)
 
         plt.clf()
 
