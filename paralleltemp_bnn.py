@@ -1,3 +1,16 @@
+""" 
+Runs Parallel Tempering Sampling or MCMCMC Sampling for timeseries prediction. In other words, trains a regression model neural network
+utilising parallel tempering as it's sampling method.
+Hyperparameters: 
+1. topology
+2. NumSample (note: the numsample remains constant for each chain and does NOT gets divided by num_chains)
+3. num_chains
+4. maxtemp (uses dynamic temperature values so no need to specify temp values for each chain)
+
+Note: Used Tensorflow's wrapper for CUDA to utilise the computation power of the GPU in my PC. Comment out lines 17, 503, 504 and 505
+      and fix indent for line 506 to run on normal CPU
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -6,7 +19,6 @@ import math
 import pickle
 import tensorflow as tf
 
-# An example of a class
 class Network:
     def __init__(self, Topo, Train, Test):
         self.Top = Topo  # NN topology [input, hidden, output]
@@ -172,7 +184,7 @@ class MCMC:
         plt.plot(x_train, y_train)
         plt.plot(x_train, pred_train)
         plt.title("Plot of Data vs Initial Fx")
-        plt.savefig('result/begin.png')
+        plt.savefig('result_Lazer2/begin.png')
         plt.clf()
 
         plt.plot(x_train, y_train)
@@ -237,8 +249,8 @@ class MCMC:
         accept_ratio = naccept / (samples * 1.0) * 100
         lhood = lhood_current
         plt.title("Plot of Accepted Proposals")
-        plt.savefig('result/proposals'+str(beta)+'.png')
-        plt.savefig('result/proposals.svg', format='svg', dpi=600)
+        plt.savefig('result_Lazer2/proposals'+str(beta)+'.png')
+        plt.savefig('result_Lazer2/proposals.svg', format='svg', dpi=600)
         plt.clf()
 
         return (pos_w, pos_tau, fxtrain_samples, fxtest_samples, x_train, x_test, rmse_train, rmse_test, accept_ratio, lhood)
@@ -251,7 +263,7 @@ class ParallelTempering:
         self.num_chains = num_chains
         self.chains = []
         self.tempratures = []
-        self.NumSamples = int(NumSample/self.num_chains)
+        self.NumSamples = NumSample
         self.sub_sample_size = int(0.05* self.NumSamples)
         self.traindata = traindata
         self.testdata = testdata
@@ -267,14 +279,102 @@ class ParallelTempering:
         self.pos_w = np.ones((num_chains,self.NumSamples, w_size))
         self.pos_tau = np.ones((num_chains,self.NumSamples,  1))
           
-    
+    def default_beta_ladder(self, ndim, ntemps, Tmax): #https://github.com/konqr/ptemcee/blob/master/ptemcee/sampler.py
+        """
+        Returns a ladder of :math:`\beta \equiv 1/T` under a geometric spacing that is determined by the
+        arguments ``ntemps`` and ``Tmax``.  The temperature selection algorithm works as follows:
+        Ideally, ``Tmax`` should be specified such that the tempered posterior looks like the prior at
+        this temperature.  If using adaptive parallel tempering, per `arXiv:1501.05823
+        <http://arxiv.org/abs/1501.05823>`_, choosing ``Tmax = inf`` is a safe bet, so long as
+        ``ntemps`` is also specified.
+        :param ndim:
+            The number of dimensions in the parameter space.
+        :param ntemps: (optional)
+            If set, the number of temperatures to generate.
+        :param Tmax: (optional)
+            If set, the maximum temperature for the ladder.
+        Temperatures are chosen according to the following algorithm:
+        * If neither ``ntemps`` nor ``Tmax`` is specified, raise an exception (insufficient
+          information).
+        * If ``ntemps`` is specified but not ``Tmax``, return a ladder spaced so that a Gaussian
+          posterior would have a 25% temperature swap acceptance ratio.
+        * If ``Tmax`` is specified but not ``ntemps``:
+          * If ``Tmax = inf``, raise an exception (insufficient information).
+          * Else, space chains geometrically as above (for 25% acceptance) until ``Tmax`` is reached.
+        * If ``Tmax`` and ``ntemps`` are specified:
+          * If ``Tmax = inf``, place one chain at ``inf`` and ``ntemps-1`` in a 25% geometric spacing.
+          * Else, use the unique geometric spacing defined by ``ntemps`` and ``Tmax``.
+        """
+
+        if type(ndim) != int or ndim < 1:
+            raise ValueError('Invalid number of dimensions specified.')
+        if ntemps is None and Tmax is None:
+            raise ValueError('Must specify one of ``ntemps`` and ``Tmax``.')
+        if Tmax is not None and Tmax <= 1:
+            raise ValueError('``Tmax`` must be greater than 1.')
+        if ntemps is not None and (type(ntemps) != int or ntemps < 1):
+            raise ValueError('Invalid number of temperatures specified.')
+
+        tstep = np.array([25.2741, 7., 4.47502, 3.5236, 3.0232,
+                          2.71225, 2.49879, 2.34226, 2.22198, 2.12628,
+                          2.04807, 1.98276, 1.92728, 1.87946, 1.83774,
+                          1.80096, 1.76826, 1.73895, 1.7125, 1.68849,
+                          1.66657, 1.64647, 1.62795, 1.61083, 1.59494,
+                          1.58014, 1.56632, 1.55338, 1.54123, 1.5298,
+                          1.51901, 1.50881, 1.49916, 1.49, 1.4813,
+                          1.47302, 1.46512, 1.45759, 1.45039, 1.4435,
+                          1.4369, 1.43056, 1.42448, 1.41864, 1.41302,
+                          1.40761, 1.40239, 1.39736, 1.3925, 1.38781,
+                          1.38327, 1.37888, 1.37463, 1.37051, 1.36652,
+                          1.36265, 1.35889, 1.35524, 1.3517, 1.34825,
+                          1.3449, 1.34164, 1.33847, 1.33538, 1.33236,
+                          1.32943, 1.32656, 1.32377, 1.32104, 1.31838,
+                          1.31578, 1.31325, 1.31076, 1.30834, 1.30596,
+                          1.30364, 1.30137, 1.29915, 1.29697, 1.29484,
+                          1.29275, 1.29071, 1.2887, 1.28673, 1.2848,
+                          1.28291, 1.28106, 1.27923, 1.27745, 1.27569,
+                          1.27397, 1.27227, 1.27061, 1.26898, 1.26737,
+                          1.26579, 1.26424, 1.26271, 1.26121,
+                          1.25973])
+
+        if ndim > tstep.shape[0]:
+            # An approximation to the temperature step at large
+            # dimension
+            tstep = 1.0 + 2.0*np.sqrt(np.log(4.0))/np.sqrt(ndim)
+        else:
+            tstep = tstep[ndim-1]
+
+        appendInf = False
+        if Tmax == np.inf:
+            appendInf = True
+            Tmax = None
+            ntemps = ntemps - 1
+
+        if ntemps is not None:
+            if Tmax is None:
+                # Determine Tmax from ntemps.
+                Tmax = tstep ** (ntemps - 1)
+        else:
+            if Tmax is None:
+                raise ValueError('Must specify at least one of ``ntemps'' and '
+                                 'finite ``Tmax``.')
+
+            # Determine ntemps from Tmax.
+            ntemps = int(np.log(Tmax) / np.log(tstep) + 2)
+
+        betas = np.logspace(0, -np.log10(Tmax), ntemps)
+        if appendInf:
+            # Use a geometric spacing, but replace the top-most temperature with
+            # infinity.
+            betas = np.concatenate((betas, [0]))
+
+        return betas
+        
     # assigin tempratures dynamically   
     def assign_temptarures(self):
-        tmpr_rate = (self.maxtemp /self.num_chains)
-        temp = 10.0 #change temp
+        betas = self.default_beta_ladder(2, ntemps=self.num_chains, Tmax=self.maxtemp)      
         for i in range(0, self.num_chains):            
-            self.tempratures.append(temp)
-            temp += 10
+            self.tempratures.append(1.0/betas[i])
             print (self.tempratures[i])
             
     
@@ -372,15 +472,16 @@ class ParallelTempering:
 # -------------------------------------------------------------------
 def main():
     outres = open('resultspriors.txt', 'w')
+    t = time.time()
     for problem in range(2, 3): 
 
         hidden = 5
         input = 4  #
         output = 1
 
-        
-        traindata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\Sunspot\\train.txt")
-        testdata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\Sunspot\\test.txt")  #
+        #Load Data (Pl edit as per your directory address
+        traindata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\\Lazer\\train.txt")
+        testdata = np.loadtxt("A:\\Work\\Projects\\USyd\\MCMC\\PT\\LDMCMC_timeseries-master\\Data_OneStepAhead\\Lazer\\test.txt")  #
 
         print(traindata)
 
@@ -396,7 +497,7 @@ def main():
         num_chains = 2
 
         #Maximum tempreature of hottest chain  
-        maxtemp = 100
+        maxtemp = 20
         
         # Create A a Patratellel Tempring object instance 
         pt = ParallelTempering(num_chains, maxtemp,NumSample,traindata,testdata,topology)
@@ -411,7 +512,7 @@ def main():
         pickle.dump([fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test],f)
         #[fx_train,fx_test,pos_w,pos_tau,rmse_train, rmse_test, x_train, x_test] = pickle.load(f)
         f.close()
-        burnin = 0.1 * NumSample  # use post burn in samples
+        burnin = 0.05* NumSample  # use post burn in samples
 
         pos_w = pos_w[int(burnin):, ]
         pos_tau = pos_tau[int(burnin):, ]
@@ -442,8 +543,8 @@ def main():
         plt.legend(loc='upper right')
 
         plt.title("Plot of Test Data vs MCMC Uncertainty ")
-        plt.savefig('result/mcmcrestest.png')
-        plt.savefig('result/mcmcrestest.svg', format='svg', dpi=600)
+        plt.savefig('result_Lazer2/mcmcrestest.png')
+        plt.savefig('result_Lazer2/mcmcrestest.svg', format='svg', dpi=600)
         plt.clf()
         # -----------------------------------------
         plt.plot(x_train[-1,:], ytraindata, label='actual')
@@ -454,8 +555,8 @@ def main():
         plt.legend(loc='upper right')
 
         plt.title("Plot of Train Data vs MCMC Uncertainty ")
-        plt.savefig('result/mcmcrestrain.png')
-        plt.savefig('result/mcmcrestrain.svg', format='svg', dpi=600)
+        plt.savefig('result_Lazer2/mcmcrestrain.png')
+        plt.savefig('result_Lazer2/mcmcrestrain.svg', format='svg', dpi=600)
         plt.clf()
 
         mpl_fig = plt.figure()
@@ -468,10 +569,11 @@ def main():
         plt.legend(loc='upper right')
 
         plt.title("Boxplot of Posterior W (weights and biases)")
-        plt.savefig('result/w_pos.png')
-        plt.savefig('result/w_pos.svg', format='svg', dpi=600)
+        plt.savefig('result_Lazer2/w_pos.png')
+        plt.savefig('result_Lazer2/w_pos.svg', format='svg', dpi=600)
 
         plt.clf()
 
-
+    elapsed = time.time() - t
+    print("Time elapsed: %.2f seconds" %elapsed)
 if __name__ == "__main__": main()
